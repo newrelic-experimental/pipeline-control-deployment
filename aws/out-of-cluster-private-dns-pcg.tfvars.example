@@ -1,0 +1,124 @@
+# Out-of-cluster pattern — gateway-side cluster tfvars
+#
+# For when the workloads sending telemetry run outside the cluster the gateway runs in.
+# This example provisions a second EKS cluster in the same VPC as the sender:
+# two applies of 2-eks share the VPC via `vpc_name` + `shared_cluster_names`.
+# Senders elsewhere (EC2, ECS, a peered VPC, on-prem) use the same gateway-side
+# config; only the sender side differs.
+#
+# Usage:
+#   1. Copy this file to `out-of-cluster-private-dns-pcg.tfvars` (the copy is gitignored)
+#   2. Fill in YOUR values (permissions_boundary, tags)
+#   3. Apply 1-vpc ONCE using this file:
+#        cd aws/1-vpc
+#        terraform init
+#        terraform apply -var-file=../out-of-cluster-private-dns-pcg.tfvars
+#   4. Apply 2-eks in the pcg-cluster workspace using this file:
+#        cd aws/2-eks
+#        terraform init
+#        terraform workspace new pcg-cluster
+#        terraform apply -var-file=../out-of-cluster-private-dns-pcg.tfvars
+#   5. Then repeat step 4 for apps-cluster using out-of-cluster-private-dns-apps.tfvars
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLUSTER IDENTITY
+# ─────────────────────────────────────────────────────────────────────────────
+
+cluster_name = "pcg-cluster"
+
+# vpc_name = the VPC's Name tag prefix ("<vpc_name>-vpc").
+# Set to a shared name (not cluster_name) so both clusters look up the same VPC.
+vpc_name = "pcg-shared"
+
+# shared_cluster_names = every EKS cluster that will use this VPC's subnets.
+# The 1-vpc module writes a `kubernetes.io/cluster/<name>=shared` tag
+# on every subnet for each name in this list, so both clusters + their ALB
+# Controllers can discover them.
+# Only READ by the 1-vpc module — safe to leave the same value in the
+# apps-cluster tfvars file (that module ignores unknown vars with a warning).
+shared_cluster_names = ["pcg-cluster", "apps-cluster"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TWO-CLUSTER MODULES — read by modules that touch both clusters
+# ─────────────────────────────────────────────────────────────────────────────
+# The 4.2-out-of-cluster-tls module needs to know BOTH cluster
+# names to write Secrets to each. These two vars are consumed only by
+# out-of-cluster modules; single-cluster modules ignore them with a harmless
+# warning.
+pcg_cluster_name  = "pcg-cluster"
+apps_cluster_name = "apps-cluster"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NETWORK + REGION
+# ─────────────────────────────────────────────────────────────────────────────
+
+aws_region = "eu-west-1"
+
+# VPC CIDR. Change if 10.0.0.0/16 conflicts with a peer VPC.
+vpc_cidr = "10.0.0.0/16"
+
+kubernetes_version = "1.31"
+
+# Node group configuration. Bump if you'll run heavy workloads.
+node_groups = {
+  general = {
+    desired_size   = 2
+    min_size       = 1
+    max_size       = 4
+    instance_types = ["t3.medium"]
+    capacity_type  = "ON_DEMAND"
+    disk_size      = 20
+  }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# IAM — leave empty unless your org requires a boundary
+# ─────────────────────────────────────────────────────────────────────────────
+
+# See the "Restricted-IAM accounts" section of aws/README.md for why some
+# accounts need this. Delete this line if your account has no boundary policy.
+# Example: permissions_boundary = "arn:aws:iam::123456789012:policy/my-boundary"
+permissions_boundary = ""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAGS
+# ─────────────────────────────────────────────────────────────────────────────
+
+environment = "dev"
+
+tags = {
+  Owner    = "your-name"
+  Purpose  = "pipeline-control-gateway"
+  Topology = "out-of-cluster"
+  Cluster  = "pcg-cluster"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ALB INGRESS + ROUTE53 ALIAS — consumed by aws/5-pcg/*
+# ─────────────────────────────────────────────────────────────────────────────
+# Consumed by the 5-pcg/flux module when it installs the gateway on
+# pcg-cluster. Turns on the ALB Ingress + Route53 record creation branches
+# that are disabled by default for the intra-cluster pattern.
+
+create_alb_ingress    = true
+create_route53_record = true
+pcg_hostname          = "pcg.internal.newrelic"
+alb_scheme            = "internal"
+
+# Route53 zone ID from 4.1-route53-private-zone's terraform output.
+# Get it after applying 4.1-route53-private-zone:
+#   cd aws/4-dns-tls/private/4.1-route53-private-zone && terraform output zone_id
+route53_zone_id = "REPLACE_WITH_ZONE_ID"
+
+# TLS Secret name — created by Step 5 (aws/4-dns-tls/private/4.2-out-of-cluster-tls)
+tls_secret_name = "pcg-tls-secret"
+
+# ACM certificate ARN — output from Step 5 (aws/4-dns-tls/private/4.2-out-of-cluster-tls).
+# Get it after applying that module:
+#   cd aws/4-dns-tls/private/4.2-out-of-cluster-tls && terraform output acm_certificate_arn
+# AWS ALB requires the cert to be in ACM (by ARN). Only used when create_alb_ingress = true.
+acm_certificate_arn = "REPLACE_WITH_ACM_CERT_ARN"
+
+# Gateway values.yaml — downloaded from New Relic install wizard.
+# Save it as pcg-values.yaml next to the aws/5-pcg/flux/ module.
+pcg_values_file = "./pcg-values.yaml"

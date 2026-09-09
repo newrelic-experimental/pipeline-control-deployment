@@ -1,0 +1,161 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Gateway connectivity check — out-of-cluster · Node.js APM
+#
+# Sibling of `sample-app-apm-nodejs-intra-cluster.yaml`. This variant is for
+# the **out-of-cluster** pattern — apps-cluster pod sends telemetry across
+# the VPC to the gateway running on pcg-cluster, via the private Route53 zone +
+# internal ALB.
+#
+#   app pod (apps-cluster)
+#     │ HTTPS (443, mounts pcg-ca-bundle to trust Private CA)
+#     ▼
+#   Route53 private zone → pcg.internal.newrelic
+#     ▼
+#   Internal ALB (pcg-cluster) — TLS terminates here
+#     ▼
+#   Gateway Service (pcg-cluster) → New Relic
+#
+# ── Differences from the intra-cluster sample ────────────────────────────────
+# 1. Deploys to `default` namespace — that's where the out-of-cluster-tls
+#    module writes `pcg-ca-bundle` on apps-cluster (the intra-cluster sample
+#    uses `newrelic`).
+# 2. NEW_RELIC_HOST points at the Route53 private hostname (`pcg.internal.newrelic`)
+#    instead of the k8s Service DNS. Only resolvable inside the shared VPC.
+# 3. Must be applied against the apps-cluster kubectl context, not pcg-cluster.
+#
+# ── Prerequisites ─────────────────────────────────────────────────────────────
+#   - Full out-of-cluster stack applied (aws/1-vpc, 2-eks, 3-ingress/alb,
+#     4-dns-tls/private/{4.1,4.2}, 5-pcg/{flux,fluxless} with create_alb_ingress=true)
+#   - `pcg-ca-bundle` Secret exists in apps-cluster's `default` namespace
+#     (written by aws/4-dns-tls/private/4.2-out-of-cluster-tls)
+#   - Route53 private zone with an A-record for `pcg.internal.newrelic` → the ALB,
+#     zone associated with the shared VPC
+#   - Your New Relic ingest license key (the ingest license key from your
+#     values.yaml — NOT a User API key starting with `NRAK-`)
+#
+# ── Usage ─────────────────────────────────────────────────────────────────────
+#   # Point kubectl at apps-cluster
+#   export CTX_APPS=arn:aws:eks:<region>:<account-id>:cluster/apps-cluster
+#
+#   # License Secret lives in `default` (where the app runs)
+#   kubectl --context $CTX_APPS -n default create secret generic \
+#     pcg-connectivity-nodejs-license \
+#     --from-literal=license-key='<YOUR_INGEST_LICENSE_KEY>'
+#
+#   kubectl --context $CTX_APPS apply -f sample-app-apm-nodejs-out-of-cluster.yaml
+#
+#   # If your gateway hostname isn't `pcg.internal.newrelic`, override:
+#   #   sed 's|pcg.internal.newrelic|pcg.internal.example.com|' \
+#   #     sample-app-apm-nodejs-out-of-cluster.yaml | kubectl --context $CTX_APPS apply -f -
+#
+# ── Verify ────────────────────────────────────────────────────────────────────
+#   kubectl --context $CTX_APPS -n default logs -f \
+#     -l app.kubernetes.io/name=pcg-connectivity-nodejs-apm-out-of-cluster
+#   # Look for: "Agent state changed from connecting to connected"
+#   # Then check New Relic: APM & Services -> pcg-connectivity-nodejs-apm-out-of-cluster
+#
+# ── Cleanup ───────────────────────────────────────────────────────────────────
+#   kubectl --context $CTX_APPS delete -f sample-app-apm-nodejs-out-of-cluster.yaml
+#   kubectl --context $CTX_APPS -n default delete secret pcg-connectivity-nodejs-license
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pcg-connectivity-nodejs-apm-out-of-cluster-src
+  namespace: default
+data:
+  server.js: |
+    const express = require('express');
+    const http = require('http');
+    const app = express();
+    const PORT = 8080;
+
+    app.get('/', (req, res) => res.send('pcg-connectivity-nodejs-apm-out-of-cluster ok\n'));
+    app.get('/work', (req, res) => {
+      // Small delay so the transaction has a measurable duration / span.
+      setTimeout(() => res.json({ ok: true, ts: Date.now() }), 20);
+    });
+
+    app.listen(PORT, () => console.log('pcg-connectivity-nodejs-apm-out-of-cluster listening on', PORT));
+
+    // Generate steady self-traffic so APM reports Transactions + Spans
+    // continuously without needing an external caller.
+    setInterval(() => {
+      http.get(`http://localhost:${PORT}/work`, r => r.resume()).on('error', () => {});
+    }, 5000);
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pcg-connectivity-nodejs-apm-out-of-cluster
+  namespace: default
+  labels:
+    app.kubernetes.io/name: pcg-connectivity-nodejs-apm-out-of-cluster
+    app.kubernetes.io/part-of: pipeline-control-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pcg-connectivity-nodejs-apm-out-of-cluster
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pcg-connectivity-nodejs-apm-out-of-cluster
+    spec:
+      containers:
+        - name: app
+          image: node:22-alpine
+          workingDir: /app
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              cp /config/server.js /app/server.js && \
+              npm install --no-audit --no-fund newrelic@14.3.4 express@4.22.2 && \
+              exec node -r newrelic server.js
+          env:
+            - name: NEW_RELIC_APP_NAME
+              value: "pcg-connectivity-nodejs-apm-out-of-cluster"
+            - name: NEW_RELIC_LICENSE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: pcg-connectivity-nodejs-license
+                  key: license-key
+            - name: NEW_RELIC_NO_CONFIG_FILE
+              value: "true"
+            - name: NEW_RELIC_LOG
+              value: "stdout"
+            - name: NEW_RELIC_LOG_LEVEL
+              value: "info"
+            # out-of-cluster: point at the Route53 private zone hostname (resolves
+            # via VPC DNS to the internal ALB in front of the gateway on pcg-cluster).
+            # Change this if your zone_name / pcg_hostname differs.
+            - name: NEW_RELIC_HOST
+              value: "pcg.internal.newrelic"
+            # Trust the Private CA that signed the gateway's TLS cert (ALB serves it).
+            - name: NODE_EXTRA_CA_CERTS
+              value: "/certs/ca.crt"
+          volumeMounts:
+            - name: app-src
+              mountPath: /config
+              readOnly: true
+            - name: app-work
+              mountPath: /app
+            - name: pcg-ca
+              mountPath: /certs
+              readOnly: true
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+      volumes:
+        - name: app-src
+          configMap:
+            name: pcg-connectivity-nodejs-apm-out-of-cluster-src
+        - name: app-work
+          emptyDir: {}
+        - name: pcg-ca
+          secret:
+            secretName: pcg-ca-bundle

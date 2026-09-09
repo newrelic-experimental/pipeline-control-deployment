@@ -1,0 +1,99 @@
+# Intra-cluster pattern — shared tfvars
+#
+# Copy this to `intra-cluster.tfvars`, fill in YOUR values, then pass it to
+# every `terraform` command per the aws/README.md intra-cluster walkthrough. Path depth
+# varies per module (e.g., ../intra-cluster.tfvars from aws/1-vpc, or
+# ../../../intra-cluster.tfvars from aws/4-dns-tls/cert-manager/4.1-installer).
+#
+# Terraform will pick up only the variables each module declares and ignore
+# the rest (with a harmless warning). That means you set the cluster name
+# ONCE here, and it propagates to all intra-cluster modules.
+#
+# ─── FLUX vs FLUXLESS mode ───────────────────────────────────────────────────
+# This example works with EITHER 5-pcg/flux OR 5-pcg/fluxless. The values.yaml
+# files come from the New Relic install wizard:
+#   - Flux mode:    ONE values.yaml    → set pcg_values_file below
+#   - Fluxless mode: TWO values.yaml   → set BOTH agent_control_values_file + pcg_values_file
+# See aws/5-pcg/{flux,fluxless}/README.md for details.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUIRED — set these once
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Name your cluster. This name is also used as a tag on the VPC + subnets,
+# which is how the EKS module auto-discovers them. Must be the same value
+# across all intra-cluster modules — that's the whole point of this shared file.
+cluster_name = "pipeline-control-gateway-cluster"
+
+# AWS region. All resources go here.
+aws_region = "us-west-1"
+
+# ─── Gateway values.yaml file paths (REQUIRED for 5-pcg/{flux,fluxless}) ─────
+# Download from New Relic install wizard, then set the path(s) below.
+# Flux mode uses pcg_values_file only. Fluxless mode uses BOTH.
+pcg_values_file           = "./pcg-values.yaml"
+# agent_control_values_file = "./agent-control-values.yaml"   # Fluxless mode only
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OPTIONAL — sensible defaults provided; override only if you need to
+# ─────────────────────────────────────────────────────────────────────────────
+
+# VPC CIDR. Change if 10.0.0.0/16 conflicts with another VPC you peer with.
+vpc_cidr = "10.0.0.0/16"
+
+# Kubernetes version for EKS.
+kubernetes_version = "1.31"
+
+# EKS worker node configuration.
+# t3.medium × 2 is the minimum for cert-manager + NGINX + the gateway.
+# Bump to t3.large or add nodes if you'll run apps alongside.
+node_groups = {
+  general = {
+    desired_size   = 2
+    min_size       = 1
+    max_size       = 4
+    instance_types = ["t3.medium"]
+    capacity_type  = "ON_DEMAND"
+    disk_size      = 20
+  }
+}
+
+# Gateway hostname apps use to reach the reverse proxy. The intra-cluster defaults are the
+# k8s-native Service DNS names — no CoreDNS patching, no custom hostname.
+#   NGINX: pcg-nginx.newrelic.svc.cluster.local
+#   Kong:  pcg-kong-kong-proxy.newrelic.svc.cluster.local
+# The pcg_hostname variable is legacy — only relevant for BYO-DNS scenarios.
+# pcg_hostname = "pcg-nginx.newrelic.svc.cluster.local"
+
+# cert-manager / TLS — defaults match the guide.
+issuer_name         = "internal-ca-issuer"
+ca_secret_name      = "internal-ca-secret"
+ca_secret_namespace = "cert-manager"
+tls_secret_name     = "pcg-tls-secret"
+# Note: each module uses its own namespace default (cert-manager → "cert-manager",
+# nginx/the gateway → "newrelic"). Don't set `namespace = ...` here — it would apply to
+# both modules and put cert-manager in the wrong place.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# IAM PERMISSIONS BOUNDARY — leave empty unless your org requires one
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# A permissions boundary is an OPTIONAL IAM guardrail. Most accounts don't
+# need one — leave this empty and the EKS module will attach no boundary.
+#
+# Set it ONLY if:
+#   - Your AWS admin told you "all roles must have boundary X"
+#   - You hit `AccessDenied: ... no permissions boundary was specified`
+#     when running the EKS module
+#
+# Example: permissions_boundary = "arn:aws:iam::123456789012:policy/my-boundary"
+permissions_boundary = ""
+
+# Environment label, used in default_tags.
+environment = "dev"
+
+# Extra tags applied to every AWS resource.
+tags = {
+  Owner   = "your-name"
+  Purpose = "pipeline-control-gateway"
+}

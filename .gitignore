@@ -1,0 +1,111 @@
+# ─── Terraform working files ──────────────────────────────────────────────────
+
+# Provider binaries and module cache
+**/.terraform/
+**/.terraform/*
+
+# State, backups, and workspace state directories
+*.tfstate
+*.tfstate.*
+terraform.tfstate.d/
+**/terraform.tfstate.d/
+
+# State lock metadata left behind by an interrupted apply
+.terraform.tfstate.lock.info
+**/.terraform.tfstate.lock.info
+
+# Saved plans
+tfplan
+*.tfplan
+**/tfplan
+
+# Dependency lock files (optional - some teams commit this)
+.terraform.lock.hcl
+
+# Override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# CLI configuration
+.terraformrc
+terraform.rc
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Work-in-progress edits (rename to a real .tf when ready)
+*.tf.new
+
+# ─── Secrets and environment-specific inputs ──────────────────────────────────
+
+# Real tfvars hold cluster names, license keys, and account-specific ARNs.
+# The committed templates end in .tfvars.example, so they are not matched by
+# the patterns below; the negations are belt-and-braces.
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+!*.tfvars.json.example
+
+# scripts/deploy.sh backs a tfvars file up before overwriting it, as both
+# <name>.tfvars.bak and <name>.tfvars.bak-<timestamp>. A bare *.bak pattern
+# does not match the timestamped form, so match any .bak suffix.
+*.bak*
+**/*.bak*
+
+# Helm values files - typically contain license keys and OAuth client secrets
+*values.yaml
+**/*values.yaml
+
+# Kubeconfigs and AWS assume-role output (both carry live credentials)
+kubeconfig*
+response.json
+**/response.json
+assume-role.sh
+
+# Local direnv environment
+.envrc
+.direnv/
+
+# TLS material produced by the verification steps in the docs
+# (openssl s_client / x509 dumps, private keys, CSRs)
+*.pem
+*.key
+*.crt
+*.csr
+*.p12
+*.pfx
+
+# JSON dumps of terraform output (contain VPC / cluster / subnet IDs)
+vpc-outputs.json
+eks-outputs.json
+**/vpc-outputs.json
+**/eks-outputs.json
+
+# ─── Tooling and editor ───────────────────────────────────────────────────────
+
+# Helm chart cache
+charts/
+
+# AI coding assistant local config
+.claude/
+.cursor/
+.aider*
+
+# Editors / IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Generated / temporary (.bak and .bak-<timestamp> are covered above)
+*.backup
+*.tmp
+.archive/
+
+# OS cruft
+.DS_Store
+Thumbs.db

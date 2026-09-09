@@ -1,0 +1,76 @@
+# Out-of-cluster pattern — apps-side cluster tfvars
+#
+# The SECOND EKS cluster in the shared VPC (see out-of-cluster-private-dns-pcg.tfvars
+# for the full context). This cluster hosts application workloads that send
+# telemetry to the gateway running in the sibling cluster.
+#
+# Usage:
+#   1. Copy this file to `out-of-cluster-private-dns-apps.tfvars` (gitignored)
+#   2. Fill in YOUR values
+#   3. Apply the gateway-side out-of-cluster-private-dns-pcg.tfvars FIRST (creates the VPC)
+#   4. Then apply 2-eks for the apps cluster in its own workspace:
+#        cd aws/2-eks
+#        terraform workspace new apps-cluster
+#        terraform apply -var-file=../out-of-cluster-private-dns-apps.tfvars
+#
+# Note: 1-vpc is NOT applied a second time — the VPC already exists.
+#       Only 2-eks (and later ALB Controller) runs against this tfvars.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLUSTER IDENTITY
+# ─────────────────────────────────────────────────────────────────────────────
+
+cluster_name = "apps-cluster"
+
+# Same vpc_name as out-of-cluster-private-dns-pcg.tfvars — this is how the 2-eks
+# module finds the existing shared VPC. If you changed it in the other file,
+# match here.
+vpc_name = "pcg-shared"
+
+# Kept identical to the pcg-cluster file for clarity. Only used by
+# 1-vpc (which isn't re-run here), so this value is technically
+# ignored — but keeping the two tfvars in sync prevents drift confusion.
+shared_cluster_names = ["pcg-cluster", "apps-cluster"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NETWORK + REGION
+# ─────────────────────────────────────────────────────────────────────────────
+
+aws_region = "eu-west-1"
+
+# vpc_cidr is intentionally NOT set here — the VPC was already created by the
+# pcg-cluster apply. 2-eks ignores vpc_cidr; it reads the VPC via
+# discovery (Name tag = "<vpc_name>-vpc").
+
+kubernetes_version = "1.31"
+
+node_groups = {
+  general = {
+    desired_size   = 2
+    min_size       = 1
+    max_size       = 4
+    instance_types = ["t3.medium"]
+    capacity_type  = "ON_DEMAND"
+    disk_size      = 20
+  }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# IAM
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Example: permissions_boundary = "arn:aws:iam::123456789012:policy/my-boundary"
+permissions_boundary = ""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAGS
+# ─────────────────────────────────────────────────────────────────────────────
+
+environment = "dev"
+
+tags = {
+  Owner    = "your-name"
+  Purpose  = "pipeline-control-gateway"
+  Topology = "out-of-cluster"
+  Cluster  = "apps-cluster"
+}
